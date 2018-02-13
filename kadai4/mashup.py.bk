@@ -1,0 +1,162 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import sys
+import urllib
+import urllib2
+import json
+import struct
+import sys
+import uuid
+
+# APIアクセスキー
+gnavi_keyid = "2841a8e7e9c397c3fb2d97a5fb516816"
+google_api_key = "AIzaSyBSzIn2MoyrCo-B4wBGEIvFAT2UKFDR5dM"
+
+# macアドレスを取得する
+def get_macaddr():
+    return "-".join([hex(fragment)[2:].zfill(2)
+        for fragment in struct.unpack("BBBBBB", struct.pack("!Q", uuid.getnode())[2:])]) + "\n"
+
+# 変数の型が文字列かどうかチェック
+def is_str(data=None):
+    if isinstance(data, str) or isinstance(data, unicode):
+        return True
+    else:
+        return False
+
+def http_get(url):
+    try:
+        return urllib.urlopen(url).read()
+    except ValueError:
+        print u"APIアクセスに失敗しました。"
+        sys.exit()
+
+
+def http_post(url, data, header):
+    request = urllib2.Request(url, data, header)
+    return urllib2.urlopen(request).read()
+
+
+def getlocation_byjson(json_obj, url):
+    headers = {"Content-Type": "application/json"}
+    json_data = json.dumps(json_obj).encode("UTF-8")
+    url += "?key=" + google_api_key
+
+    res = http_post(url, json_data, headers)
+    return json.loads(res)
+
+
+def getlocation(latlng):
+    geocode_uri = "https://maps.googleapis.com/maps/api/geocode/json"
+    geocode_uri += "?latlng=" + latlng + "&language=ja"
+    print geocode_uri
+
+    # 取得した結果を解析
+    data = json.loads(http_get(geocode_uri))
+    return data['results'][0]
+
+
+# エンドポイントURL
+gnavi_uri = "https://api.gnavi.co.jp/RestSearchAPI/20150630/"
+getlocation_uri = "https://www.googleapis.com/geolocation/v1/geolocate"
+
+address = '東京都杉並区高円寺'
+range = "1"
+
+macAddress = get_macaddr()
+json_obj = {"wifiAccessPoints": [{"macAddress": ""}]}
+json_obj['wifiAccessPoints'][0]['macAddress'] = get_macaddr()
+
+location = getlocation_byjson(json_obj, getlocation_uri)
+
+latitude = location['location']['lat']
+longitude = location['location']['lng']
+loc =  getlocation(str(latitude) + "," + str(longitude))
+
+
+# URLに続けて入れるパラメータを組立
+query = [
+    ("format",    "json"),
+    ("keyid",     gnavi_keyid),
+    ("latitude",  latitude),
+    ("longitude", longitude),
+    ("range",     range)
+]
+
+# URL生成
+gnavi_uri += "?{0}".format(urllib.urlencode(query))
+
+# API実行
+result = http_get(gnavi_uri)
+
+# 取得した結果を解析
+data = json.loads(result)
+
+# エラーの場合
+if "error" in data:
+    if "message" in data:
+        print u"{0}".format(data["message"])
+    else:
+        print u"データ取得に失敗しました。"
+    sys.exit()
+
+# ヒット件数取得
+total_hit_count = None
+if "total_hit_count" in data:
+    total_hit_count = data["total_hit_count"]
+
+# ヒット件数が0以下、または、ヒット件数がなかったら終了
+if total_hit_count is None or total_hit_count <= 0:
+    print u"指定した内容ではヒットしませんでした。"
+    sys.exit()
+
+# レストランデータがなかったら終了
+if not "rest" in data:
+    print u"レストランデータが見つからなかったため終了します。"
+    sys.exit()
+
+# ヒット件数表示
+print "{0}件ヒットしました。".format(total_hit_count)
+print "店舗名  |  最寄の路線  |  最寄の駅  |  最寄駅から店までの時間 "
+
+# 出力件数
+disp_count = 0
+
+# レストランデータ取得
+for rest in data["rest"]:
+    line = []
+    id = ""
+    name = ""
+    access_line = ""
+    access_station = ""
+    access_walk = ""
+    code_category_name_s = []
+
+    # 店舗名
+    if "name" in rest and is_str(rest["name"]):
+        name = u"{0}".format(rest["name"]) + " | "
+        line.append(name)
+
+    if "access" in rest:
+        access = rest["access"]
+        # 最寄の路線
+        if "line" in access and is_str(access["line"]):
+            access_line = u"{0}".format(access["line"]) + " | "
+        # 最寄の駅
+        if "station" in access and is_str(access["station"]):
+            access_station = u"{0}".format(access["station"]) + " | "
+        # 最寄駅から店までの時間
+        if "walk" in access and is_str(access["walk"]):
+            access_walk = u"{0}分".format(access["walk"]) + " | "
+
+        line.extend([access_line, access_station, access_walk])
+
+    # タブ区切りで出力
+    print "\t".join(line)
+    disp_count += 1
+
+# 出力件数を表示して終了
+print "----"
+print u"{0}件出力しました。".format(disp_count)
+sys.exit()
